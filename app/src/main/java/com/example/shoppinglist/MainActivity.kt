@@ -6,6 +6,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -15,13 +16,20 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -150,17 +158,38 @@ class ShoppingListViewModel(application: Application) : AndroidViewModel(applica
             _shoppingList[index] = updatedItem
         }
     }
+
+    fun deleteItem(item: ShoppingItem) { // --- New Functionality ---
+        viewModelScope.launch(Dispatchers.IO) {
+            dao.deleteItem(item)
+            loadShoppingList()
+        }
+    }
+
+    fun updateItem(item: ShoppingItem) { // --- New Functionality ---
+        viewModelScope.launch(Dispatchers.IO) {
+            dao.updateItem(item)
+            loadShoppingList()
+        }
+    }
 }
 
 @Composable
 fun ShoppingItemCard(item: ShoppingItem,
-                     onToggleBought: () -> Unit = {}) {
+                     onToggleBought: () -> Unit = {},
+                     onDelete: () -> Unit = {},        // --- New Functionality ---
+                     onEdit: () -> Unit = {}) {
+    val bgColor by animateColorAsState(  // --- New Functionality ---
+        targetValue = if (item.isBought) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+        else MaterialTheme.colorScheme.surfaceDim,
+        label = "checkbox animation"
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(8.dp)
             .background(
-                MaterialTheme.colorScheme.surfaceDim,
+                bgColor,
                 MaterialTheme.shapes.large
             )
             .clickable { onToggleBought() }
@@ -171,6 +200,12 @@ fun ShoppingItemCard(item: ShoppingItem,
             onToggleBought()
         })
         Text(text = item.name, fontSize = 18.sp, modifier = Modifier.weight(1f))
+        IconButton(onClick = onEdit) {      // --- New Functionality ---
+            Icon(Icons.Default.Edit, contentDescription = "Edit")
+        }
+        IconButton(onClick = onDelete) {    // --- New Functionality ---
+            Icon(Icons.Default.Delete, contentDescription = "Delete")
+        }
     }
 }
 
@@ -207,8 +242,37 @@ fun AddItemButton(addItem: (String) -> Unit = {}) {
 }
 
 @Composable
+fun EditItemDialog(
+    initialText: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var text by remember { mutableStateOf(initialText) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit Item") },
+        text = {
+            OutlinedTextField(value = text, onValueChange = { text = it })
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                if (text.isNotEmpty()) onConfirm(text)
+            }) { Text("OK") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
 fun ShoppingListScreen(viewModel: ShoppingListViewModel = viewModel(factory = ShoppingListViewModelFactory(
     LocalContext.current.applicationContext as Application))) {
+    var editingItem by remember { mutableStateOf<ShoppingItem?>(null) } // --- New Functionality ---
+
+    val boughtCount = viewModel.shoppingList.count { it.isBought }      // --- New Functionality ---
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -216,12 +280,33 @@ fun ShoppingListScreen(viewModel: ShoppingListViewModel = viewModel(factory = Sh
     ) {
         item {
             AddItemButton { viewModel.addItem(it) }
+            Text( // --- New Functionality ---
+                text = "Bought items: $boughtCount",
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
         }
         itemsIndexed(viewModel.shoppingList) { ix, item ->
-            ShoppingItemCard(item) {
-                viewModel.toggleBought(ix)
-            }
+            ShoppingItemCard(
+                item = item,
+                onToggleBought = { viewModel.toggleBought(ix) },
+                onDelete = { viewModel.deleteItem(item) },                          // --- New Functionality ---
+                onEdit = { editingItem = item }                                    // --- New Functionality ---
+            )
         }
+    }
+
+    // --- New Functionality ---
+    editingItem?.let { item ->
+        EditItemDialog(
+            initialText = item.name,
+            onConfirm = {
+                val updated = item.copy(name = it)
+                viewModel.updateItem(updated)
+                editingItem = null
+            },
+            onDismiss = { editingItem = null }
+        )
     }
 }
 
